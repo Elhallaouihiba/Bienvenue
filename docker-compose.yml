@@ -1,0 +1,67 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Marhba — docker-compose.yml
+#
+# Services:
+#   postgres  — PostgreSQL 16 database (with health check)
+#   backend   — Express API (waits for postgres to be healthy before starting)
+#
+# Usage:
+#   docker compose up --build        # first run (builds the image)
+#   docker compose up                # subsequent runs
+#   docker compose down -v           # stop + delete volumes (clean slate)
+#   docker compose logs -f backend   # stream backend logs
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── PostgreSQL 16 ──────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: marhba_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: marhba_db
+      POSTGRES_USER: marhba_user
+      POSTGRES_PASSWORD: marhba_pass
+    ports:
+      - "5432:5432"         # expose to host so you can connect with pgAdmin/DBeaver
+    volumes:
+      - postgres_data:/var/lib/postgresql/data   # persist data across restarts
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U marhba_user -d marhba_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── Express Backend ────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: marhba_backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy    # wait for Postgres to pass its health check
+    environment:
+      PORT: 5000
+      NODE_ENV: development
+      # Database — must match the postgres service above
+      DB_HOST: postgres               # Docker network name (not localhost!)
+      DB_PORT: 5432
+      DB_NAME: marhba_db
+      DB_USER: marhba_user
+      DB_PASSWORD: marhba_pass
+      # JWT — override this in production
+      JWT_SECRET: your_super_secret_jwt_key_change_me_in_production
+      JWT_EXPIRES_IN: 7d
+    ports:
+      - "5000:5000"                   # expose API to host
+    volumes:
+      - ./backend:/app                # hot-reload: map source code into container
+      - /app/node_modules             # anonymous volume to protect node_modules
+
+# ── Named Volumes ─────────────────────────────────────────────────────────────
+volumes:
+  postgres_data:
